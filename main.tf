@@ -95,12 +95,12 @@ data "aws_iam_policy_document" "assume_role" {
 
 # The role itself
 resource "aws_iam_role" "this" {
-  for_each            = local.roles_map
-  name                = "${each.value.name_prefix}-${local.system_name}"
-  assume_role_policy  = data.aws_iam_policy_document.assume_role[each.key].json
-  description         = try(each.value.description, "") != "" ? each.value.description : "IAM Role ${each.value.name_prefix}-${local.system_name}"
-#   managed_policy_arns = toset(try(each.value.managed_policies, {}))
-  tags                = local.all_tags
+  for_each           = local.roles_map
+  name               = "${each.value.name_prefix}-${local.system_name}"
+  assume_role_policy = data.aws_iam_policy_document.assume_role[each.key].json
+  description        = try(each.value.description, "") != "" ? each.value.description : "IAM Role ${each.value.name_prefix}-${local.system_name}"
+  #   managed_policy_arns = toset(try(each.value.managed_policies, {}))
+  tags = local.all_tags
 }
 
 data "aws_iam_policy" "managed" {
