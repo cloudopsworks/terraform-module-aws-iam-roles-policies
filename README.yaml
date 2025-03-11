@@ -1,4 +1,4 @@
-name: Terraform Transit Gateway Module
+name: Terraform AWS IAM Roles & Policies Module
 #logo: logo/logo.jpg
 
 license: "APACHE2"
@@ -8,17 +8,67 @@ copyrights:
     url: "https://cloudops.works"
     year: "2024"
 
-github_repo: cloudopsworks/terraform-module-aws-vpc-setup
+github_repo: cloudopsworks/terraform-module-aws-iam-roles-policies
 
 description: |-
-  VPC Module for setting up transit gateway with ResourceAccessMananger support.
+  This Terraform module facilitates the creation, management, and governance of AWS Identity
+  and Access Management (IAM) roles and policies. Its primary objectives are to streamline the
+  provisioning process, enforce best practices, and offer a repeatable solution for consistent 
+  IAM administration. The module leverages GitHub Actions for automated publishing to the Terraform Registry.
+
 
 # Introduction to the project
 #introduction: |-
 #  This is an introduction.
 
 # How to use this project
-#usage: |-
+usage: |-
+  ## Usage with Terraform
+  ```hcl
+  # main.tf
+  
+  module "iam_roles_policies" {
+  source  = "cloudopsworks/iam-roles-policies/aws"
+  version = "1.0.0"  # Replace with desired version (semver format)
+
+  # Define module variables below (these are placeholders for illustration)
+  # variable_one = "value_one"
+  # variable_two = "value_two"
+  # ...
+  }
+  
+  # You can declare additional resources or data sources here as needed.
+  ```
+  ### Steps to Use
+  1. Add this module reference to your `main.tf` or your preferred .tf file.
+  2. Configure the variables for your AWS IAM roles and policies (e.g., role names, path, trust policy, etc.).
+  3. Run `terraform init` to initialize the Terraform working directory and download the module.
+  4. Run `terraform plan` to see what changes will be made.
+  5. Run `terraform apply` to make the changes in your AWS environment.
+
+  ## Usage with Terragrunt
+  Terragrunt wraps your Terraform configurations and lets you keep your AWS IAM roles and policies configuration DRY (Don’t Repeat Yourself) across multiple environments. Below is an example Terragrunt configuration:
+  ```hcl
+  # terragrunt.hcl
+
+  terraform {
+    source = "git::https://github.com/cloudopsworks/terraform-module-aws-iam-roles-policies.git?ref=v1.0.0"
+  }
+
+  inputs = {
+    # Define module variables below (these are placeholders for illustration)
+    # variable_one = "value_one"
+    # variable_two = "value_two"
+    # ...
+  }
+  ```
+  ### Steps to Use
+  1. Create a `terragrunt.hcl` file pointing to the GitHub source for the module.
+  2. Update the `ref` parameter to match the tag or branch you wish to use.
+  3. Specify the input variables you want to pass to the module under `inputs`.
+  4. Run `terragrunt init` to initialize Terragrunt and download the module.
+  5. Run `terragrunt plan` to preview changes.
+  6. Run `terragrunt apply` to deploy your IAM resources to AWS.
 
 # Example usage
 #examples: |-
