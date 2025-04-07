@@ -17,6 +17,7 @@
 #         values: list(string)
 #         variable: string
 # managed_policies: list(string)
+# policy_refs: list(string)
 # inline_policies:
 #   - name: string
 #     statements:
@@ -43,6 +44,16 @@ locals {
         }
       }
   ]...)
+  policy_refs = merge(
+    [
+      for role in var.roles : {
+        for policy_ref in try(role.policy_refs, []) : "${role.name_prefix}-${policy_ref}" => {
+          name_prefix = role.name_prefix
+          policy_ref  = policy_ref
+        }
+      }
+    ]
+  )
   inline_policies = merge(
     [
       for role in var.roles : {
@@ -142,6 +153,12 @@ resource "aws_iam_role_policy" "inline" {
   name     = each.value.name
   role     = aws_iam_role.this[each.value.name_prefix].id
   policy   = data.aws_iam_policy_document.inline[each.key].json
+}
+
+resource "aws_iam_role_policy_attachment" "policy_ref" {
+  for_each   = local.policy_refs
+  role       = aws_iam_role.this[each.value.name_prefix].id
+  policy_arn = aws_iam_policy.this[each.value.policy_ref].arn
 }
 
 resource "aws_iam_instance_profile" "this" {
