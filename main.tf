@@ -52,7 +52,7 @@ locals {
           policy_ref  = policy_ref
         }
       }
-    ]
+    ]...
   )
   inline_policies = merge(
     [
