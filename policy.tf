@@ -25,6 +25,7 @@ locals {
 resource "aws_iam_policy" "this" {
   for_each    = local.policy_map
   name        = "${each.value.name_prefix}-${local.system_name}"
+  path        = try(each.value.path, null)
   description = try(each.value.description, "") != "" ? each.value.description : "IAM Policy ${each.value.name_prefix}-${local.system_name}"
   tags        = local.all_tags
   policy      = data.aws_iam_policy_document.policy[each.key].json
