@@ -13,6 +13,7 @@
 #     effect: string
 #     actions: list(string)
 #     resources: list(string)
+#     resource_refs: list(string)
 #     conditions:
 #       - test: string
 #         values: list(string)
@@ -38,10 +39,13 @@ data "aws_iam_policy_document" "policy" {
   dynamic "statement" {
     for_each = each.value.statements
     content {
-      sid       = try(statement.value.sid, null)
-      effect    = statement.value.effect
-      actions   = statement.value.actions
-      resources = statement.value.resources
+      sid     = try(statement.value.sid, null)
+      effect  = statement.value.effect
+      actions = statement.value.actions
+      resources = concat(try(statement.value.resources, []), [
+        for item in statement.value.resource_refs :
+        aws_iam_role.this[item].arn
+      ])
       dynamic "condition" {
         for_each = try(statement.value.conditions, [])
         content {
