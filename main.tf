@@ -12,6 +12,7 @@
 #   - actions: list(string)
 #     type: string
 #     principals: list(string)
+#     principal_refs: list(string)
 #     conditions:
 #       - test: string
 #         values: list(string)
@@ -25,6 +26,7 @@
 #         effect: string
 #         actions: list(string)
 #         resources: list(string)
+#         resource_refs: list(string)
 #         conditions:
 #           - test: string
 #             values: list(string)
@@ -91,6 +93,10 @@ data "aws_iam_policy_document" "assume_role" {
       principals {
         type        = statement.value.type
         identifiers = statement.value.principals
+        # identifiers = concat(try(statement.value.principals, []), [
+        #   for item in statement.value.principal_refs :
+        #   aws_iam_role.this[item].arn
+        # ])
       }
       dynamic "condition" {
         for_each = try(statement.value.conditions, [])
@@ -133,10 +139,13 @@ data "aws_iam_policy_document" "inline" {
   dynamic "statement" {
     for_each = each.value.statements
     content {
-      sid       = try(statement.value.sid, null)
-      effect    = statement.value.effect
-      actions   = statement.value.actions
-      resources = statement.value.resources
+      sid     = try(statement.value.sid, null)
+      effect  = statement.value.effect
+      actions = statement.value.actions
+      resources = concat(try(statement.value.resources, []), [
+        for item in statement.value.resource_refs :
+        aws_iam_role.this[item].arn
+      ])
       dynamic "condition" {
         for_each = try(statement.value.conditions, [])
         content {
