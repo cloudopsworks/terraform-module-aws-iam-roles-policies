@@ -43,7 +43,7 @@ data "aws_iam_policy_document" "policy" {
       effect  = statement.value.effect
       actions = statement.value.actions
       resources = concat(try(statement.value.resources, []), [
-        for item in statement.value.resource_refs :
+        for item in try(statement.value.resource_refs, []) :
         aws_iam_role.this[item].arn
       ])
       dynamic "condition" {
