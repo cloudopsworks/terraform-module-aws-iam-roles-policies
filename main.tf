@@ -62,10 +62,27 @@ locals {
         for policy in try(role.inline_policies, []) : "${role.name_prefix}-${policy.name}" => {
           name_prefix = role.name_prefix
           name        = policy.name
-          statements  = policy.statements
+          statements = [
+            for statement in policy.statements :
+            statement if length(try(statement.resources, [])) > 0
+          ]
         }
       }
   ]...)
+  inline_policies_refs = merge(
+    [
+      for role in var.roles : {
+        for policy in try(role.inline_policies, []) : "${role.name_prefix}-${policy.name}-refs" => {
+          name_prefix = role.name_prefix
+          name        = policy.name
+          statements = [
+            for statement in policy.statements :
+            statement if length(try(statement.resource_refs, [])) > 0
+          ]
+        }
+      }
+  ]...)
+
   assume_role_principals = {
     for role in var.roles : role.name_prefix => {
       name_prefix = role.name_prefix
@@ -139,13 +156,35 @@ data "aws_iam_policy_document" "inline" {
   dynamic "statement" {
     for_each = each.value.statements
     content {
+      sid       = try(statement.value.sid, null)
+      effect    = statement.value.effect
+      actions   = statement.value.actions
+      resources = statement.value.resources
+      dynamic "condition" {
+        for_each = try(statement.value.conditions, [])
+        content {
+          test     = condition.value.test
+          values   = condition.value.values
+          variable = condition.value.variable
+        }
+      }
+    }
+  }
+}
+
+data "aws_iam_policy_document" "inline_refs" {
+  for_each = local.inline_policies_refs
+  version  = "2012-10-17"
+  dynamic "statement" {
+    for_each = each.value.statements
+    content {
       sid     = try(statement.value.sid, null)
       effect  = statement.value.effect
       actions = statement.value.actions
-      resources = concat(try(statement.value.resources, []), [
+      resources = [
         for item in try(statement.value.resource_refs, []) :
         aws_iam_role.this[item].arn
-      ])
+      ]
       dynamic "condition" {
         for_each = try(statement.value.conditions, [])
         content {
@@ -163,6 +202,13 @@ resource "aws_iam_role_policy" "inline" {
   name     = each.value.name
   role     = aws_iam_role.this[each.value.name_prefix].id
   policy   = data.aws_iam_policy_document.inline[each.key].json
+}
+
+resource "aws_iam_role_policy" "inline_refs" {
+  for_each = local.inline_policies_refs
+  name     = each.value.name
+  role     = aws_iam_role.this[each.value.name_prefix].id
+  policy   = data.aws_iam_policy_document.inline_refs[each.key].json
 }
 
 resource "aws_iam_role_policy_attachment" "policy_ref" {
