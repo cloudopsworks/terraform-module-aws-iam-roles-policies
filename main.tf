@@ -56,7 +56,7 @@ locals {
       }
     ]...
   )
-  inline_policies = merge(
+  inline_policies_pre = merge(
     [
       for role in var.roles : {
         for policy in try(role.inline_policies, []) : "${role.name_prefix}-${policy.name}" => {
@@ -69,7 +69,11 @@ locals {
         }
       }
   ]...)
-  inline_policies_refs = merge(
+  inline_policies = {
+    for key, policy in local.inline_policies_pre : key => policy
+    if length(policy.statements) > 0
+  }
+  inline_policies_refs_pre = merge(
     [
       for role in var.roles : {
         for policy in try(role.inline_policies, []) : "${role.name_prefix}-${policy.name}-refs" => {
@@ -82,7 +86,10 @@ locals {
         }
       }
   ]...)
-
+  inline_policies_refs = {
+    for key, policy in local.inline_policies_refs_pre : key => policy
+    if length(policy.statements) > 0
+  }
   assume_role_principals = {
     for role in var.roles : role.name_prefix => {
       name_prefix = role.name_prefix
