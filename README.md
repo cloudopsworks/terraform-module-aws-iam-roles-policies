@@ -51,6 +51,11 @@ We have [*lots of terraform modules*][terraform_modules] that are Open Source an
 
 
 
+## Introduction
+
+This module provides a comprehensive way to manage IAM roles, policies, and service-linked roles in AWS.
+It supports creating complex role structures with assume role policies, managed policy attachments, and inline policies.
+It also allows for cross-referencing roles and policies created within the same module instance.
 
 ## Usage
 
@@ -59,55 +64,144 @@ We have [*lots of terraform modules*][terraform_modules] that are Open Source an
 Instead pin to the release tag (e.g. `?ref=vX.Y.Z`) of one of our [latest releases](https://github.com/cloudopsworks/terraform-module-aws-iam-roles-policies/releases).
 
 
-## Usage with Terraform
+### Usage with Terragrunt
+To use this module with Terragrunt, define it in your `terragrunt.hcl`:
 ```hcl
-# main.tf
-
-module "iam_roles_policies" {
-source  = "cloudopsworks/iam-roles-policies/aws"
-version = "1.0.0"  # Replace with desired version (semver format)
-
-# Define module variables below (these are placeholders for illustration)
-# variable_one = "value_one"
-# variable_two = "value_two"
-# ...
-}
-
-# You can declare additional resources or data sources here as needed.
-```
-### Steps to Use
-1. Add this module reference to your `main.tf` or your preferred .tf file.
-2. Configure the variables for your AWS IAM roles and policies (e.g., role names, path, trust policy, etc.).
-3. Run `terraform init` to initialize the Terraform working directory and download the module.
-4. Run `terraform plan` to see what changes will be made.
-5. Run `terraform apply` to make the changes in your AWS environment.
-
-## Usage with Terragrunt
-Terragrunt wraps your Terraform configurations and lets you keep your AWS IAM roles and policies configuration DRY (Don’t Repeat Yourself) across multiple environments. Below is an example Terragrunt configuration:
-```hcl
-# terragrunt.hcl
-
 terraform {
   source = "git::https://github.com/cloudopsworks/terraform-module-aws-iam-roles-policies.git?ref=v1.0.0"
 }
 
 inputs = {
-  # Define module variables below (these are placeholders for illustration)
-  # variable_one = "value_one"
-  # variable_two = "value_two"
-  # ...
+  roles = [
+    {
+      name_prefix = "app-role"
+      description = "Application execution role"
+      assume_roles = [
+        {
+          actions    = ["sts:AssumeRole"]
+          type       = "Service"
+          principals = ["ec2.amazonaws.com"]
+        }
+      ]
+      managed_policies = ["arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"]
+    }
+  ]
 }
 ```
-### Steps to Use
-1. Create a `terragrunt.hcl` file pointing to the GitHub source for the module.
-2. Update the `ref` parameter to match the tag or branch you wish to use.
-3. Specify the input variables you want to pass to the module under `inputs`.
-4. Run `terragrunt init` to initialize Terragrunt and download the module.
-5. Run `terragrunt plan` to preview changes.
-6. Run `terragrunt apply` to deploy your IAM resources to AWS.
+
+### Variables Structure (YAML)
+Below is the complete YAML structure for the module variables:
+
+#### Roles
+```yaml
+roles:
+  - name_prefix: "sample-role"      # (Required) The prefix for the role name.
+    description: "Role description"  # (Optional) The description of the role. Default: "IAM Role <name_prefix>-<system_name>"
+    path: "/"                        # (Optional) The path for the role. Default: "/"
+    instance_profile: false          # (Optional) Whether to create an instance profile for the role. Default: false
+    assume_roles:                    # (Optional) The trust policy for the role.
+      - actions: ["sts:AssumeRole"]  # (Required) Actions for the trust policy.
+        type: "Service"              # (Required) Type of principal (e.g., Service, AWS, Federated).
+        principals: ["ec2.amazonaws.com"] # (Required) List of principals that can assume the role.
+        conditions:                  # (Optional) Conditions for the trust policy.
+          - test: "StringEquals"     # (Required) The condition test.
+            values: ["value"]        # (Required) The condition values.
+            variable: "variable"     # (Required) The condition variable.
+    managed_policies: ["arn:aws:iam::aws:policy/ReadOnlyAccess"] # (Optional) List of managed policy ARNs to attach.
+    policy_refs: ["policy-key"]      # (Optional) List of keys of policies created by this module to attach.
+    inline_policies:                 # (Optional) List of inline policies to create.
+      - name: "inline-policy"        # (Required) The name of the inline policy.
+        statements:                  # (Required) List of statements for the inline policy.
+          - sid: "StatementId"       # (Optional) The statement ID.
+            effect: "Allow"          # (Required) The effect of the statement (Allow or Deny).
+            actions: ["s3:Get*"]     # (Required) List of actions.
+            resources: ["*"]         # (Optional) List of resources.
+            resource_refs: ["role-key"] # (Optional) List of keys of roles created by this module to use as resource ARNs.
+            conditions:              # (Optional) Conditions for the statement.
+              - test: "StringEquals" # (Required) The condition test.
+                values: ["value"]    # (Required) The condition values.
+                variable: "variable" # (Required) The condition variable.
+```
+
+#### Policies
+```yaml
+policies:
+  - name_prefix: "sample-policy"     # (Required) The prefix for the policy name.
+    description: "Policy description" # (Optional) The description of the policy. Default: "IAM Policy <name_prefix>-<system_name>"
+    path: "/"                        # (Optional) The path for the policy. Default: "/"
+    statements:                      # (Required) List of statements for the policy.
+      - sid: "StatementId"           # (Optional) The statement ID.
+        effect: "Allow"              # (Required) The effect of the statement (Allow or Deny).
+        actions: ["s3:ListBucket"]   # (Required) List of actions.
+        resources: ["arn:aws:s3:::bucket"] # (Optional) List of resources.
+        resource_refs: ["role-key"]  # (Optional) List of keys of roles created by this module to use as resource ARNs.
+        conditions:                  # (Optional) Conditions for the statement.
+          - test: "StringEquals"     # (Required) The condition test.
+            values: ["value"]        # (Required) The condition values.
+            variable: "variable"     # (Required) The condition variable.
+```
+
+#### Service Linked Roles
+```yaml
+service_linked_roles:
+  - service: "service.amazonaws.com" # (Required) The AWS service name.
+    description: "Description"       # (Optional) The description of the role.
+    suffix: "suffix"                 # (Optional) A custom suffix for the role name.
+```
+
+## Quick Start
+
+1. Define your roles and policies in a YAML format compatible with the module's variables.
+2. Create a `terragrunt.hcl` file.
+3. Reference this module in the `source` block.
+4. Pass your YAML-defined configuration into the `inputs` block.
+5. Run `terragrunt apply`.
 
 
+## Examples
 
+### Full Terragrunt Example
+```hcl
+inputs = {
+  roles = [
+    {
+      name_prefix = "web-server"
+      instance_profile = true
+      assume_roles = [
+        {
+          actions    = ["sts:AssumeRole"]
+          type       = "Service"
+          principals = ["ec2.amazonaws.com"]
+        }
+      ]
+      inline_policies = [
+        {
+          name = "s3-access"
+          statements = [
+            {
+              effect    = "Allow"
+              actions   = ["s3:GetObject"]
+              resources = ["arn:aws:s3:::my-bucket/*"]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+  policies = [
+    {
+      name_prefix = "kms-access"
+      statements = [
+        {
+          effect    = "Allow"
+          actions   = ["kms:Decrypt"]
+          resources = ["*"]
+        }
+      ]
+    }
+  ]
+}
+```
 
 
 
@@ -118,6 +212,9 @@ Available targets:
   help                                Help screen
   help/all                            Display help for all targets
   help/short                          This help short screen
+  init/aws                            Initialize the project for a specific cloud provider: AWS
+  init/azurerm                        Initialize the project for a specific cloud provider: Azure RM
+  init/gcp                            Initialize the project for a specific cloud provider: GCP
   lint                                Lint terraform/opentofu code
   tag                                 Tag the current version
 
@@ -127,12 +224,13 @@ Available targets:
 | Name | Version |
 |------|---------|
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.3 |
+| <a name="requirement_aws"></a> [aws](#requirement\_aws) | ~> 6.4 |
 
 ## Providers
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | n/a |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 5.90.1 |
 
 ## Modules
 
@@ -148,11 +246,14 @@ Available targets:
 | [aws_iam_policy.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
 | [aws_iam_role.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
 | [aws_iam_role_policy.inline](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
+| [aws_iam_role_policy.inline_refs](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [aws_iam_role_policy_attachment.managed](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy_attachment) | resource |
+| [aws_iam_role_policy_attachment.policy_ref](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy_attachment) | resource |
 | [aws_iam_service_linked_role.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_service_linked_role) | resource |
 | [aws_iam_policy.managed](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy) | data source |
 | [aws_iam_policy_document.assume_role](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.inline](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
+| [aws_iam_policy_document.inline_refs](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.policy](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_region.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/region) | data source |
 
@@ -208,7 +309,7 @@ Please use the [issue tracker](https://github.com/cloudopsworks/terraform-module
 
 ## Copyrights
 
-Copyright © 2024-2025 [Cloud Ops Works LLC](https://cloudops.works)
+Copyright © 2024-2026 [Cloud Ops Works LLC](https://cloudops.works)
 
 
 
