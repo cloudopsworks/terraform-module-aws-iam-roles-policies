@@ -1,5 +1,5 @@
 ##
-# (c) 2021-2025
+# (c) 2021-2026
 #     Cloud Ops Works LLC - https://cloudops.works/
 #     Find us on:
 #       GitHub: https://github.com/cloudopsworks
@@ -9,8 +9,10 @@
 
 # Entry Format:
 #
-# name_prefix: string
+# name_prefix: string   # one of name_prefix or name is required
+# name: string
 # description: string
+# path: string
 # statements:
 #   - sid: string
 #     effect: string
@@ -22,15 +24,24 @@
 #         values: list(string)
 #         variable: string
 locals {
-  policy_map = { for policy in var.policies : policy.name_prefix => policy }
+  # Policies are keyed by name_prefix when set, otherwise by name (used by roles[].policy_refs).
+  policy_map = {
+    for policy in var.policies :
+    (try(policy.name_prefix, "") != "" ? policy.name_prefix : policy.name) => policy
+  }
+  # name_prefix renders "<name_prefix>-<system_name>"; name is used verbatim.
+  policy_names = {
+    for key, policy in local.policy_map :
+    key => try(policy.name_prefix, "") != "" ? format("%s-%s", policy.name_prefix, local.system_name) : policy.name
+  }
 }
 
-# The role itself
+# The policy itself
 resource "aws_iam_policy" "this" {
   for_each    = local.policy_map
-  name        = "${each.value.name_prefix}-${local.system_name}"
+  name        = local.policy_names[each.key]
   path        = try(each.value.path, null)
-  description = try(each.value.description, "") != "" ? each.value.description : "IAM Policy ${each.value.name_prefix}-${local.system_name}"
+  description = try(each.value.description, "") != "" ? each.value.description : format("IAM Policy %s", local.policy_names[each.key])
   tags        = local.all_tags
   policy      = data.aws_iam_policy_document.policy[each.key].json
 }
