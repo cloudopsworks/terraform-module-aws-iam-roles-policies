@@ -3,8 +3,7 @@
   ** 
   ** This file was automatically generated. 
   ** 1) Make all changes to `README.yaml` 
-  ** 2) Run `make init` (you only need to do this once)
-  ** 3) Run`make readme` to rebuild this file. 
+  ** 2) Run `tronador readme build` to rebuild this file.
   -->
 [![README Header][readme_header_img]][readme_header_link]
 
@@ -12,13 +11,18 @@
 
 # Terraform AWS IAM Roles & Policies Module
 
+ [![Latest Release](https://img.shields.io/github/release/cloudopsworks/terraform-module-aws-iam-roles-policies.svg?style=for-the-badge)](https://github.com/cloudopsworks/terraform-module-aws-iam-roles-policies/releases/latest) [![Last Updated](https://img.shields.io/github/last-commit/cloudopsworks/terraform-module-aws-iam-roles-policies.svg?style=for-the-badge)](https://github.com/cloudopsworks/terraform-module-aws-iam-roles-policies/commits)
 
 
-
-This Terraform module facilitates the creation, management, and governance of AWS Identity
-and Access Management (IAM) roles and policies. Its primary objectives are to streamline the
-provisioning process, enforce best practices, and offer a repeatable solution for consistent 
-IAM administration. The module leverages GitHub Actions for automated publishing to the Terraform Registry.
+Declarative management of AWS IAM roles, customer managed policies and service-linked roles,
+driven by a single YAML `inputs.yaml` per deployment. This module:
+  - Creates IAM roles with a configurable trust policy (defaults to EC2 `sts:AssumeRole`).
+  - Attaches existing AWS/customer managed policies by ARN and module-created policies by key.
+  - Embeds inline policies in roles, including statements that target other roles of the same deployment.
+  - Optionally creates an EC2 instance profile per role.
+  - Creates customer managed IAM policies, named by prefix (suffixed with the system name) or by exact name.
+  - Creates IAM service-linked roles with optional custom suffix.
+  - Tags every taggable resource with the organization tag set plus `extra_tags`.
 
 
 ---
@@ -48,9 +52,40 @@ We have [*lots of terraform modules*][terraform_modules] that are Open Source an
 
 ## Introduction
 
-This module provides a comprehensive way to manage IAM roles, policies, and service-linked roles in AWS.
-It supports creating complex role structures with assume role policies, managed policy attachments, and inline policies.
-It also allows for cross-referencing roles and policies created within the same module instance.
+The module turns three lists — `roles`, `policies` and `service_linked_roles` — into IAM resources,
+following the Cloud Ops Works naming convention so the same definition can be deployed across
+environments and spokes without name collisions.
+
+Naming
+
+| Object | Rendered name |
+|--------|---------------|
+| Role / instance profile | `<name_prefix>-<system_name>` |
+| Policy with `name_prefix` | `<name_prefix>-<system_name>` |
+| Policy with `name` only | `<name>` (verbatim) |
+| Service-linked role | AWS-defined (`AWSServiceRoleFor...`), plus `_<suffix>` when `suffix` is set |
+
+`system_name` is `<organization_unit>-<environment_name>-<environment_type>-<spoke_def>-<region>`
+(all lower-case, region shortened, e.g. `us-east-1` → `usea1`).
+
+Cross-references within one deployment
+
+| Field | Points to | Resolved as |
+|-------|-----------|-------------|
+| `roles[].policy_refs` | `policies[]` key (`name_prefix`, or `name`) | Policy attachment |
+| `roles[].inline_policies[].statements[].resource_refs` | `roles[].name_prefix` | Role ARNs used as statement resources |
+| `policies[].statements[].resource_refs` | `roles[].name_prefix` | Role ARNs appended to statement resources |
+
+Resources created
+
+| Resource | One per |
+|----------|---------|
+| `aws_iam_role` | `roles[]` entry |
+| `aws_iam_role_policy_attachment` | `managed_policies` ARN and `policy_refs` key |
+| `aws_iam_role_policy` | `inline_policies[]` entry (see notes on `resource_refs`) |
+| `aws_iam_instance_profile` | role with `instance_profile: true` |
+| `aws_iam_policy` | `policies[]` entry |
+| `aws_iam_service_linked_role` | `service_linked_roles[]` entry |
 
 ## Usage
 
@@ -59,143 +94,247 @@ It also allows for cross-referencing roles and policies created within the same 
 Instead pin to the release tag (e.g. `?ref=vX.Y.Z`) of one of our [latest releases](https://github.com/cloudopsworks/terraform-module-aws-iam-roles-policies/releases).
 
 
-### Usage with Terragrunt
-To use this module with Terragrunt, define it in your `terragrunt.hcl`:
+This module is consumed through Terragrunt. Bootstrap a new deployment with Terragrunt's
+built-in scaffold command, which sources `.boilerplate/boilerplate.yml` to generate
+`terragrunt.hcl`, `inputs.yaml`, and `local-tags.json`.
+
+Scaffolding workflow
+
+```sh
+# 1. Create and enter the target deployment directory
+mkdir -p prod/us-east-1/001/iam-roles-policies
+cd prod/us-east-1/001/iam-roles-policies
+
+# 2. Scaffold the module (do NOT use --working-dir)
+terragrunt scaffold github.com/cloudopsworks/terraform-module-aws-iam-roles-policies
+
+# 3. Edit inputs.yaml with deployment-specific values
+#    (all keys and comments are pre-populated from .boilerplate/inputs.yaml)
+vi inputs.yaml
+
+# 4. Apply
+terragrunt apply
+```
+
+Generated `inputs.yaml` (from `.boilerplate/inputs.yaml`)
+
+```yaml
+# Module configuration
+#
+# Names: roles and name_prefix-based policies are rendered as "<name_prefix>-<system_name>",
+# where system_name = <org_unit>-<env_name>-<env_type>-<spoke_def>-<region short>.
+
+# Role definition Structure YAML
+# roles:                                       # (Optional) List of IAM roles to create. Default: []
+#   - name_prefix: "sample-role"               # (Required) Unique role key and name prefix. Role name is rendered as "<name_prefix>-<system_name>".
+#     description: "Role description"          # (Optional) Role description. Default: "IAM Role <name_prefix>-<system_name>"
+#     path: "/"                                # (Optional) IAM path for the role. Default: "/" (AWS default)
+#     instance_profile: false                  # (Optional) Create an EC2 instance profile with the same name as the role. Default: false
+#     assume_roles:                            # (Optional) Trust policy statements. Default: one statement allowing sts:AssumeRole from Service ec2.amazonaws.com
+#       - actions: ["sts:AssumeRole"]          # (Required) Trust actions. e.g. sts:AssumeRole, sts:AssumeRoleWithWebIdentity, sts:AssumeRoleWithSAML, sts:TagSession
+#         type: "Service"                      # (Required) Principal type. Valid values: "Service", "AWS", "Federated", "CanonicalUser", "*"
+#         principals: ["ec2.amazonaws.com"]    # (Required) Principal identifiers (service names, account/role ARNs, or federated provider ARNs).
+#         conditions:                          # (Optional) Trust policy conditions. Default: []
+#           - test: "StringEquals"             # (Required) Condition operator. e.g. StringEquals, StringLike, ArnLike, Bool.
+#             variable: "aws:SourceAccount"    # (Required) Condition key evaluated by the operator.
+#             values: ["123456789012"]         # (Required) Values compared against the condition key.
+#     managed_policies:                        # (Optional) Existing managed policy ARNs to attach (AWS or customer managed). Each ARN is validated with a data lookup. Default: []
+#       - "arn:aws:iam::aws:policy/ReadOnlyAccess"
+#     policy_refs:                             # (Optional) Keys of policies created by this module (their name_prefix, or name) to attach. Default: []
+#       - "sample-policy"
+#     inline_policies:                         # (Optional) Inline policies embedded in the role. Default: []
+#       - name: "inline-policy"                # (Required) Inline policy name; must be unique within the role.
+#         statements:                          # (Required) Policy statements. Statements without resources or resource_refs are ignored.
+#           - sid: "StatementId"               # (Optional) Statement ID. Default: null
+#             effect: "Allow"                  # (Required) Statement effect. Valid values: "Allow", "Deny"
+#             actions: ["s3:GetObject"]        # (Required) IAM actions.
+#             resources: ["*"]                 # (Optional) Resource ARNs. Default: []
+#             resource_refs: ["other-role"]    # (Optional) name_prefix keys of roles created by this module; their ARNs are used as resources. Default: []
+#             conditions:                      # (Optional) Statement conditions. Default: []
+#               - test: "StringEquals"         # (Required) Condition operator.
+#                 variable: "aws:RequestedRegion" # (Required) Condition key.
+#                 values: ["us-east-1"]        # (Required) Values compared against the condition key.
+roles: []
+
+# Policy definition Structure YAML
+# policies:                                    # (Optional) List of customer managed IAM policies to create. Default: []
+#   - name_prefix: "sample-policy"             # (Required unless name is set) Policy key and name prefix. Policy name is rendered as "<name_prefix>-<system_name>".
+#     name: "sample-policy-fixed-name"         # (Required unless name_prefix is set) Exact policy name, used verbatim and as the policy key when name_prefix is empty or absent.
+#     description: "Policy description"        # (Optional) Policy description. Default: "IAM Policy <rendered policy name>"
+#     path: "/"                                # (Optional) IAM path for the policy. Default: "/" (AWS default)
+#     statements:                              # (Required) Policy statements.
+#       - sid: "StatementId"                   # (Optional) Statement ID. Default: null
+#         effect: "Allow"                      # (Required) Statement effect. Valid values: "Allow", "Deny"
+#         actions: ["s3:ListBucket"]           # (Required) IAM actions.
+#         resources: ["arn:aws:s3:::bucket"]   # (Optional) Resource ARNs. Default: []
+#         resource_refs: ["sample-role"]       # (Optional) name_prefix keys of roles created by this module; their ARNs are appended to resources. Default: []
+#         conditions:                          # (Optional) Statement conditions. Default: []
+#           - test: "StringEquals"             # (Required) Condition operator.
+#             variable: "aws:PrincipalTag/team" # (Required) Condition key.
+#             values: ["platform"]             # (Required) Values compared against the condition key.
+policies: []
+
+# Service Linked Roles definition Structure YAML
+# service_linked_roles:                        # (Optional) List of IAM service-linked roles to create. Default: []
+#   - service: "elasticbeanstalk.amazonaws.com" # (Required) AWS service principal the role is linked to; must be unique in the list.
+#     description: "Description"               # (Optional) Role description. Default: "Default Service Linked Role: <service>"
+#     suffix: "suffix"                         # (Optional) Custom suffix appended to the role name. Only supported by some services. Default: null
+service_linked_roles: []
+```
+
+Generated `terragrunt.hcl` (from `.boilerplate/terragrunt.hcl`)
+
+The scaffold loads `inputs.yaml` as `local.local_vars` and wires each module variable into
+the `inputs` block. `org`, `spoke_def`, and `extra_tags` come from the Terragrunt hierarchy;
+`roles`, `policies`, and `service_linked_roles` come from your `inputs.yaml`.
+
 ```hcl
+locals {
+  local_vars  = yamldecode(file("./inputs.yaml"))
+  spoke_vars  = yamldecode(file(find_in_parent_folders("spoke-inputs.yaml")))
+  region_vars = yamldecode(file(find_in_parent_folders("region-inputs.yaml")))
+  env_vars    = yamldecode(file(find_in_parent_folders("env-inputs.yaml")))
+  global_vars = yamldecode(file(find_in_parent_folders("global-inputs.yaml")))
+
+  local_tags  = jsondecode(file("./local-tags.json"))
+  spoke_tags  = jsondecode(file(find_in_parent_folders("spoke-tags.json")))
+  region_tags = jsondecode(file(find_in_parent_folders("region-tags.json")))
+  env_tags    = jsondecode(file(find_in_parent_folders("env-tags.json")))
+  global_tags = jsondecode(file(find_in_parent_folders("global-tags.json")))
+
+  tags = merge(
+    local.global_tags,
+    local.env_tags,
+    local.region_tags,
+    local.spoke_tags,
+    local.local_tags
+  )
+}
+
+include "root" {
+  path = find_in_parent_folders("root.hcl")
+}
+
 terraform {
-  source = "git::https://github.com/cloudopsworks/terraform-module-aws-iam-roles-policies.git?ref=v1.0.0"
+  source = "git::https://github.com/cloudopsworks/terraform-module-aws-iam-roles-policies.git?ref=vX.Y.Z"
 }
 
 inputs = {
-  roles = [
-    {
-      name_prefix = "app-role"
-      description = "Application execution role"
-      assume_roles = [
-        {
-          actions    = ["sts:AssumeRole"]
-          type       = "Service"
-          principals = ["ec2.amazonaws.com"]
-        }
-      ]
-      managed_policies = ["arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"]
-    }
-  ]
+  is_hub               = false
+  org                  = local.env_vars.org
+  spoke_def            = local.spoke_vars.spoke
+  policies             = try(local.local_vars.policies, [])
+  roles                = try(local.local_vars.roles, [])
+  service_linked_roles = try(local.local_vars.service_linked_roles, [])
+  extra_tags           = local.tags
 }
 ```
 
-### Variables Structure (YAML)
-Below is the complete YAML structure for the module variables:
-
-#### Roles
-```yaml
-roles:
-  - name_prefix: "sample-role"      # (Required) The prefix for the role name.
-    description: "Role description"  # (Optional) The description of the role. Default: "IAM Role <name_prefix>-<system_name>"
-    path: "/"                        # (Optional) The path for the role. Default: "/"
-    instance_profile: false          # (Optional) Whether to create an instance profile for the role. Default: false
-    assume_roles:                    # (Optional) The trust policy for the role.
-      - actions: ["sts:AssumeRole"]  # (Required) Actions for the trust policy.
-        type: "Service"              # (Required) Type of principal (e.g., Service, AWS, Federated).
-        principals: ["ec2.amazonaws.com"] # (Required) List of principals that can assume the role.
-        conditions:                  # (Optional) Conditions for the trust policy.
-          - test: "StringEquals"     # (Required) The condition test.
-            values: ["value"]        # (Required) The condition values.
-            variable: "variable"     # (Required) The condition variable.
-    managed_policies: ["arn:aws:iam::aws:policy/ReadOnlyAccess"] # (Optional) List of managed policy ARNs to attach.
-    policy_refs: ["policy-key"]      # (Optional) List of keys of policies created by this module to attach.
-    inline_policies:                 # (Optional) List of inline policies to create.
-      - name: "inline-policy"        # (Required) The name of the inline policy.
-        statements:                  # (Required) List of statements for the inline policy.
-          - sid: "StatementId"       # (Optional) The statement ID.
-            effect: "Allow"          # (Required) The effect of the statement (Allow or Deny).
-            actions: ["s3:Get*"]     # (Required) List of actions.
-            resources: ["*"]         # (Optional) List of resources.
-            resource_refs: ["role-key"] # (Optional) List of keys of roles created by this module to use as resource ARNs.
-            conditions:              # (Optional) Conditions for the statement.
-              - test: "StringEquals" # (Required) The condition test.
-                values: ["value"]    # (Required) The condition values.
-                variable: "variable" # (Required) The condition variable.
-```
-
-#### Policies
-```yaml
-policies:
-  - name_prefix: "sample-policy"     # (Required) The prefix for the policy name.
-    description: "Policy description" # (Optional) The description of the policy. Default: "IAM Policy <name_prefix>-<system_name>"
-    path: "/"                        # (Optional) The path for the policy. Default: "/"
-    statements:                      # (Required) List of statements for the policy.
-      - sid: "StatementId"           # (Optional) The statement ID.
-        effect: "Allow"              # (Required) The effect of the statement (Allow or Deny).
-        actions: ["s3:ListBucket"]   # (Required) List of actions.
-        resources: ["arn:aws:s3:::bucket"] # (Optional) List of resources.
-        resource_refs: ["role-key"]  # (Optional) List of keys of roles created by this module to use as resource ARNs.
-        conditions:                  # (Optional) Conditions for the statement.
-          - test: "StringEquals"     # (Required) The condition test.
-            values: ["value"]        # (Required) The condition values.
-            variable: "variable"     # (Required) The condition variable.
-```
-
-#### Service Linked Roles
-```yaml
-service_linked_roles:
-  - service: "service.amazonaws.com" # (Required) The AWS service name.
-    description: "Description"       # (Optional) The description of the role.
-    suffix: "suffix"                 # (Optional) A custom suffix for the role name.
-```
+Notes
+- `roles[].name_prefix` must be unique across `roles`; the policy key (`name_prefix`, or `name`) must be unique across `policies`; `service` must be unique across `service_linked_roles`.
+- A policy needs either `name_prefix` or `name`. When both are set, `name_prefix` wins and `name` is ignored.
+- When `assume_roles` is omitted the role trusts `ec2.amazonaws.com` with `sts:AssumeRole`. Provide `assume_roles` explicitly for any other principal.
+- `managed_policies` ARNs are looked up with `data.aws_iam_policy`, so a missing or mistyped ARN fails at plan time.
+- Inline policy statements are split by target: statements with `resources` and statements with `resource_refs` are rendered into two `aws_iam_role_policy` resources that share the inline policy `name`. Keep `resource_refs` statements in their own inline policy (with a distinct `name`) so the two do not overwrite each other. Statements with neither are dropped.
+- Service-linked roles exist once per account (per suffix). Only create them in the deployment that owns them, and only use `suffix` for services that support custom suffixes.
+- Requires AWS provider `~> 6.35` (uses `aws_region.region`).
 
 ## Quick Start
 
-1. Define your roles and policies in a YAML format compatible with the module's variables.
-2. Create a `terragrunt.hcl` file.
-3. Reference this module in the `source` block.
-4. Pass your YAML-defined configuration into the `inputs` block.
-5. Run `terragrunt apply`.
+1. Create the deployment directory and run `terragrunt scaffold github.com/cloudopsworks/terraform-module-aws-iam-roles-policies` inside it.
+2. Uncomment and fill `roles`, `policies` and/or `service_linked_roles` in the generated `inputs.yaml`.
+3. Add deployment-specific tags to `local-tags.json`.
+4. Run `terragrunt plan` to review the rendered names and policies, then `terragrunt apply`.
+5. Consume the `iam_roles`, `iam_policies` and `service_linked_roles` outputs (name and ARN) from dependent stacks.
 
 
 ## Examples
 
-### Full Terragrunt Example
-```hcl
-inputs = {
-  roles = [
-    {
-      name_prefix = "web-server"
-      instance_profile = true
-      assume_roles = [
-        {
-          actions    = ["sts:AssumeRole"]
-          type       = "Service"
-          principals = ["ec2.amazonaws.com"]
-        }
-      ]
-      inline_policies = [
-        {
-          name = "s3-access"
-          statements = [
-            {
-              effect    = "Allow"
-              actions   = ["s3:GetObject"]
-              resources = ["arn:aws:s3:::my-bucket/*"]
-            }
-          ]
-        }
-      ]
-    }
-  ]
-  policies = [
-    {
-      name_prefix = "kms-access"
-      statements = [
-        {
-          effect    = "Allow"
-          actions   = ["kms:Decrypt"]
-          resources = ["*"]
-        }
-      ]
-    }
-  ]
-}
+Scaffold the module as shown in the Usage section, then populate `inputs.yaml`. `org`,
+`spoke_def`, and `extra_tags` are supplied by the Terragrunt hierarchy.
+
+Example 1: EC2 role with instance profile, managed policy and module policy
+
+```yaml
+# inputs.yaml
+policies:
+  - name_prefix: "app-kms"
+    description: "Decrypt with the application KMS key"
+    statements:
+      - sid: "KmsDecrypt"
+        effect: "Allow"
+        actions: ["kms:Decrypt", "kms:DescribeKey"]
+        resources: ["arn:aws:kms:us-east-1:123456789012:key/11111111-2222-3333-4444-555555555555"]
+
+roles:
+  - name_prefix: "web-server"
+    instance_profile: true
+    managed_policies:
+      - "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+    policy_refs:
+      - "app-kms"
+    inline_policies:
+      - name: "s3-assets"
+        statements:
+          - effect: "Allow"
+            actions: ["s3:GetObject"]
+            resources: ["arn:aws:s3:::my-assets-bucket/*"]
+```
+
+Example 2: Cross-account role with a trust condition, plus a role that may assume it
+
+```yaml
+# inputs.yaml
+roles:
+  - name_prefix: "deployer"
+    description: "Assumed by the CI account to deploy workloads"
+    assume_roles:
+      - actions: ["sts:AssumeRole"]
+        type: "AWS"
+        principals: ["arn:aws:iam::210987654321:root"]
+        conditions:
+          - test: "StringEquals"
+            variable: "sts:ExternalId"
+            values: ["ci-deployer"]
+    managed_policies:
+      - "arn:aws:iam::aws:policy/PowerUserAccess"
+
+  - name_prefix: "lambda-runner"
+    assume_roles:
+      - actions: ["sts:AssumeRole"]
+        type: "Service"
+        principals: ["lambda.amazonaws.com"]
+    managed_policies:
+      - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+    inline_policies:
+      - name: "assume-deployer"       # resource_refs-only inline policy
+        statements:
+          - effect: "Allow"
+            actions: ["sts:AssumeRole"]
+            resource_refs: ["deployer"]
+```
+
+Example 3: Fixed-name policy and a service-linked role
+
+```yaml
+# inputs.yaml
+policies:
+  - name: "OrgReadOnlyBilling"        # created verbatim, referenced as "OrgReadOnlyBilling"
+    path: "/billing/"
+    statements:
+      - effect: "Allow"
+        actions: ["ce:Get*", "budgets:View*"]
+        resources: ["*"]
+
+service_linked_roles:
+  - service: "autoscaling.amazonaws.com"
+    suffix: "app"
+    description: "Auto Scaling role for the app fleet"
+```
+
+```json
+// local-tags.json (merged with the hierarchy tags)
+{"Application": "iam-roles-policies"}
 ```
 
 
@@ -215,26 +354,26 @@ Available targets:
 ## Requirements
 
 | Name | Version |
-|------|---------|
+| ---- | ------- |
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.3 |
-| <a name="requirement_aws"></a> [aws](#requirement\_aws) | ~> 6.4 |
+| <a name="requirement_aws"></a> [aws](#requirement\_aws) | ~> 6.35 |
 
 ## Providers
 
 | Name | Version |
-|------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | ~> 6.4 |
+| ---- | ------- |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.73.0 |
 
 ## Modules
 
 | Name | Source | Version |
-|------|--------|---------|
-| <a name="module_tags"></a> [tags](#module\_tags) | cloudopsworks/tags/local | 1.0.9 |
+| ---- | ------ | ------- |
+| <a name="module_tags"></a> [tags](#module\_tags) | cloudopsworks/tags/local | 1.0.10 |
 
 ## Resources
 
 | Name | Type |
-|------|------|
+| ---- | ---- |
 | [aws_iam_instance_profile.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_instance_profile) | resource |
 | [aws_iam_policy.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
 | [aws_iam_role.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
@@ -253,22 +392,22 @@ Available targets:
 ## Inputs
 
 | Name | Description | Type | Default | Required |
-|------|-------------|------|---------|:--------:|
-| <a name="input_extra_tags"></a> [extra\_tags](#input\_extra\_tags) | n/a | `map(string)` | `{}` | no |
-| <a name="input_is_hub"></a> [is\_hub](#input\_is\_hub) | Establish this is a HUB or spoke configuration | `bool` | `false` | no |
-| <a name="input_org"></a> [org](#input\_org) | n/a | <pre>object({<br/>    organization_name = string<br/>    organization_unit = string<br/>    environment_type  = string<br/>    environment_name  = string<br/>  })</pre> | n/a | yes |
-| <a name="input_policies"></a> [policies](#input\_policies) | A list of IAM policies to create | `any` | `[]` | no |
-| <a name="input_roles"></a> [roles](#input\_roles) | A list of IAM roles to create | `any` | `[]` | no |
-| <a name="input_service_linked_roles"></a> [service\_linked\_roles](#input\_service\_linked\_roles) | A list of service roles to create | `any` | `[]` | no |
-| <a name="input_spoke_def"></a> [spoke\_def](#input\_spoke\_def) | n/a | `string` | `"001"` | no |
+| ---- | ----------- | ---- | ------- | :------: |
+| <a name="input_extra_tags"></a> [extra\_tags](#input\_extra\_tags) | Extra tags to add to the resources | `map(string)` | `{}` | no |
+| <a name="input_is_hub"></a> [is\_hub](#input\_is\_hub) | Is this a hub or spoke configuration? | `bool` | `false` | no |
+| <a name="input_org"></a> [org](#input\_org) | Organization details | <pre>object({<br/>    organization_name = string<br/>    organization_unit = string<br/>    environment_type  = string<br/>    environment_name  = string<br/>  })</pre> | n/a | yes |
+| <a name="input_policies"></a> [policies](#input\_policies) | (Optional) List of customer managed IAM policies to create, named by name\_prefix (suffixed with the system name) or by exact name. Default: [] | `any` | `[]` | no |
+| <a name="input_roles"></a> [roles](#input\_roles) | (Optional) List of IAM roles to create, with trust policy, managed/module policy attachments, inline policies and optional instance profile. Default: [] | `any` | `[]` | no |
+| <a name="input_service_linked_roles"></a> [service\_linked\_roles](#input\_service\_linked\_roles) | (Optional) List of IAM service-linked roles to create. Default: [] | `any` | `[]` | no |
+| <a name="input_spoke_def"></a> [spoke\_def](#input\_spoke\_def) | Spoke ID Number, must be a 3 digit number | `string` | `"001"` | no |
 
 ## Outputs
 
 | Name | Description |
-|------|-------------|
-| <a name="output_iam_policies"></a> [iam\_policies](#output\_iam\_policies) | n/a |
-| <a name="output_iam_roles"></a> [iam\_roles](#output\_iam\_roles) | n/a |
-| <a name="output_service_linked_roles"></a> [service\_linked\_roles](#output\_service\_linked\_roles) | n/a |
+| ---- | ----------- |
+| <a name="output_iam_policies"></a> [iam\_policies](#output\_iam\_policies) | List of customer managed IAM policies created by the module, each with its name and ARN. |
+| <a name="output_iam_roles"></a> [iam\_roles](#output\_iam\_roles) | List of IAM roles created by the module, each with its name and ARN. |
+| <a name="output_service_linked_roles"></a> [service\_linked\_roles](#output\_service\_linked\_roles) | List of IAM service-linked roles created by the module, each with its name and ARN. |
 
 
 
